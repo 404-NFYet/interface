@@ -75,7 +75,8 @@ def _mock_glossary(section_key: str, content: str) -> list[dict]:
 
 # ── LangGraph 노드들 ──
 
-@traceable(name="build_charts", run_type="llm")
+@traceable(name="build_charts", run_type="llm",
+           metadata={"phase": "interface_3", "phase_name": "최종 조립", "step": 1})
 def build_charts_node(state: dict) -> dict:
     """viz_hint → Plotly JSON 변환."""
     if state.get("error"):
@@ -139,7 +140,8 @@ def build_charts_node(state: dict) -> dict:
         }
 
 
-@traceable(name="build_glossary", run_type="llm")
+@traceable(name="build_glossary", run_type="llm",
+           metadata={"phase": "interface_3", "phase_name": "최종 조립", "step": 2})
 def build_glossary_node(state: dict) -> dict:
     """페이지별 용어사전 생성."""
     if state.get("error"):
@@ -193,7 +195,8 @@ def build_glossary_node(state: dict) -> dict:
         }
 
 
-@traceable(name="assemble_pages", run_type="tool")
+@traceable(name="assemble_pages", run_type="tool",
+           metadata={"phase": "interface_3", "phase_name": "최종 조립", "step": 3})
 def assemble_pages_node(state: dict) -> dict:
     """6페이지 조립 (결정론적)."""
     if state.get("error"):
@@ -236,7 +239,8 @@ def assemble_pages_node(state: dict) -> dict:
         }
 
 
-@traceable(name="collect_sources", run_type="tool")
+@traceable(name="collect_sources", run_type="tool",
+           metadata={"phase": "interface_3", "phase_name": "최종 조립", "step": 4})
 def collect_sources_node(state: dict) -> dict:
     """출처 수집 (결정론적)."""
     if state.get("error"):
@@ -326,7 +330,8 @@ def collect_sources_node(state: dict) -> dict:
         }
 
 
-@traceable(name="run_final_check", run_type="llm")
+@traceable(name="run_final_check", run_type="llm",
+           metadata={"phase": "interface_3", "phase_name": "최종 조립", "step": 5})
 def run_final_check_node(state: dict) -> dict:
     """최종 할루시네이션 체크리스트 생성."""
     if state.get("error"):
@@ -370,7 +375,8 @@ def run_final_check_node(state: dict) -> dict:
         }
 
 
-@traceable(name="assemble_output", run_type="tool")
+@traceable(name="assemble_output", run_type="tool",
+           metadata={"phase": "interface_3", "phase_name": "최종 조립", "step": 6})
 def assemble_output_node(state: dict) -> dict:
     """최종 JSON 조립 + Pydantic 검증 + 파일 저장."""
     if state.get("error"):

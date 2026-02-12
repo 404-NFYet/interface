@@ -25,7 +25,8 @@ def _update_metrics(state: dict, node_name: str, elapsed: float, status: str = "
     return metrics
 
 
-@traceable(name="load_curated_context", run_type="tool")
+@traceable(name="load_curated_context", run_type="tool",
+           metadata={"phase": "data_collection", "phase_name": "데이터 수집/로드", "step": 0})
 def load_curated_context_node(state: dict) -> dict:
     """interface1 결과를 파일에서 로드하고 Pydantic으로 검증."""
     if state.get("error"):

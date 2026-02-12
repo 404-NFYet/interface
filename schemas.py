@@ -1,7 +1,7 @@
 """인터페이스 파이프라인 Pydantic v2 스키마.
 
-golden_case/03_k_defense.json 구조를 정확히 반영한다.
 3개 인터페이스(CuratedContext, RawNarrative, FinalBriefing)의 계약을 정의한다.
+데이터 수집 중간 타입(ScreenedStockItem, MatchedStockItem)도 포함한다.
 """
 
 from __future__ import annotations
@@ -9,6 +9,33 @@ from __future__ import annotations
 from typing import Any, Optional
 
 from pydantic import BaseModel, Field
+
+
+# ────────────────────────────────────────────
+# Data Collection 중간 타입
+# ────────────────────────────────────────────
+
+class ScreenedStockItem(BaseModel):
+    """가격 스크리닝 결과 (screener → intersection 입력)."""
+    symbol: str
+    name: str
+    signal: str  # short_surge|short_drop|volume_spike|mid_term_up
+    return_pct: float
+    volume_ratio: float
+    period_days: int
+
+
+class MatchedStockItem(BaseModel):
+    """v2: narrative 없이 ScreenedStock에서 직접 변환."""
+    symbol: str
+    name: str
+    signal: str
+    return_pct: float
+    volume_ratio: float
+    period_days: int
+    narrative_headlines: list[str] = Field(default_factory=list)
+    narrative_sources: list[str] = Field(default_factory=list)
+    has_narrative: bool = False
 
 
 # ────────────────────────────────────────────
@@ -53,6 +80,8 @@ class CuratedContext(BaseModel):
     verified_news: list[NewsItem]
     reports: list[ReportItem]
     concept: Concept
+    source_ids: list[str] = Field(default_factory=list)
+    evidence_source_urls: list[str] = Field(default_factory=list)
 
 
 # ────────────────────────────────────────────

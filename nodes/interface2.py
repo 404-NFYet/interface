@@ -126,7 +126,8 @@ def _mock_hallucination_check(pp: dict, hc: dict, narr: dict) -> dict:
 
 # ── LangGraph 노드들 ──
 
-@traceable(name="run_page_purpose", run_type="llm")
+@traceable(name="run_page_purpose", run_type="llm",
+           metadata={"phase": "interface_2", "phase_name": "내러티브 생성", "step": 1})
 def run_page_purpose_node(state: dict) -> dict:
     """Stage 1: theme, one_liner, concept 추출."""
     if state.get("error"):
@@ -160,7 +161,8 @@ def run_page_purpose_node(state: dict) -> dict:
         }
 
 
-@traceable(name="run_historical_case", run_type="llm")
+@traceable(name="run_historical_case", run_type="llm",
+           metadata={"phase": "interface_2", "phase_name": "내러티브 생성", "step": 2})
 def run_historical_case_node(state: dict) -> dict:
     """Stage 2: 과거 사례 매칭."""
     if state.get("error"):
@@ -198,7 +200,8 @@ def run_historical_case_node(state: dict) -> dict:
         }
 
 
-@traceable(name="run_narrative_body", run_type="llm")
+@traceable(name="run_narrative_body", run_type="llm",
+           metadata={"phase": "interface_2", "phase_name": "내러티브 생성", "step": 3})
 def run_narrative_body_node(state: dict) -> dict:
     """Stage 3: 6단계 내러티브 본문 생성."""
     if state.get("error"):
@@ -238,7 +241,8 @@ def run_narrative_body_node(state: dict) -> dict:
         }
 
 
-@traceable(name="validate_interface2", run_type="llm")
+@traceable(name="validate_interface2", run_type="llm",
+           metadata={"phase": "interface_2", "phase_name": "내러티브 생성", "step": 4})
 def validate_interface2_node(state: dict) -> dict:
     """Stage 4: 할루시네이션 체크 + interface2 조립."""
     if state.get("error"):

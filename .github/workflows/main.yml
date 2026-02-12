@@ -1,0 +1,33 @@
+name: Discord Notification
+
+on:
+  push:
+
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Send Discord Notification
+        env:
+          DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
+        run: |
+          AUTHOR="${{ github.actor }}"
+          REPO="${{ github.repository }}"
+          BRANCH="${{ github.ref_name }}"
+          COMMIT_MSG="${{ github.event.head_commit.message }}"
+          COMMIT_URL="${{ github.event.head_commit.url }}"
+
+          if [ -z "$COMMIT_MSG" ]; then
+            COMMIT_MSG="커밋 메시지가 없습니다"
+          fi
+
+          cat <<EOF > payload.json
+          {
+            "content": "🚀 **새로운 코드 푸시 알림**\n\n👤 작업자: **$AUTHOR**\n🌿 브랜치: **$BRANCH**\n📦 저장소: **$REPO**\n📝 커밋 내용:\n$COMMIT_MSG\n\n🔗 커밋 확인하기:\n$COMMIT_URL"
+          }
+          EOF
+
+          curl -H "Content-Type: application/json" \
+               -d @payload.json \
+               "$DISCORD_WEBHOOK"

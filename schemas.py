@@ -136,6 +136,22 @@ class GlossaryItem(BaseModel):
     domain: str
 
 
+
+class QuizOption(BaseModel):
+    id: str
+    label: str
+    explanation: str
+
+
+class Quiz(BaseModel):
+    context: str
+    question: str
+    options: list[QuizOption]
+    correct_answer: str
+    actual_result: str
+    lesson: str
+
+
 class Page(BaseModel):
     step: int
     title: str
@@ -144,6 +160,8 @@ class Page(BaseModel):
     bullets: list[str]
     chart: Optional[PlotlyChart] = None
     glossary: list[GlossaryItem] = Field(default_factory=list)
+    quiz: Optional[Quiz] = None
+    quiz: Optional[Quiz] = None
 
 
 class SourceItem(BaseModel):

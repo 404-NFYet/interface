@@ -20,10 +20,13 @@ load_dotenv(PROJECT_ROOT / ".env", override=False)
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
 PERPLEXITY_API_KEY = os.getenv("PERPLEXITY_API_KEY", "")
 ANTHROPIC_API_KEY = os.getenv("CLAUDE_API_KEY", "")
+DART_API_KEY = os.getenv("DART_API_KEY", "")
+ECOS_API_KEY = os.getenv("ECOS_API_KEY", "")
 
 # ── 기본 모델 (Interface 2/3 내러티브 생성) ──
 DEFAULT_MODEL = os.getenv("DEFAULT_MODEL", "claude-sonnet-4-20250514")
 CHART_MODEL = os.getenv("CHART_MODEL", "gpt-4o-mini")
+CHART_AGENT_MODEL = os.getenv("CHART_AGENT_MODEL", "gpt-4o")  # Reasoning을 위해 고성능 모델 권장
 
 # ── 경로 ──
 OUTPUT_DIR = Path(os.getenv("OUTPUT_DIR", str(Path(__file__).parent / "output")))
@@ -85,3 +88,14 @@ def get_price_period() -> tuple[str, str]:
     cal_days_needed = int(MID_TERM_TOTAL_DAYS / 0.7) + 30
     start = end - timedelta(days=cal_days_needed)
     return start.strftime("%Y-%m-%d"), end.strftime("%Y-%m-%d")
+
+
+# ── 섹션 정의 (Interface 2/3 공통) ──
+SECTION_MAP = [
+    (1, "현재 배경", "background"),
+    (2, "금융 개념 설명", "concept_explain"),
+    (3, "과거 비슷한 사례", "history"),
+    (4, "현재 상황에 적용", "application"),
+    (5, "주의해야 할 점", "caution"),
+    (6, "최종 정리", "summary"),
+]

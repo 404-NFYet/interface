@@ -35,11 +35,17 @@ from .nodes.interface2 import (
 )
 from .nodes.interface3 import (
     assemble_output_node,
-    assemble_pages_node,
-    build_charts_node,
-    build_glossary_node,
     collect_sources_node,
-    run_final_check_node,
+    run_glossary_node,
+    run_hallcheck_glossary_node,
+    run_hallcheck_pages_node,
+    run_pages_node,
+    run_theme_node,
+    run_tone_final_node,
+)
+from .nodes.chart_agent import (
+    run_chart_agent_node,
+    run_hallcheck_chart_node,
 )
 from .nodes.screening import screen_stocks_node
 
@@ -130,12 +136,16 @@ def build_graph() -> Any:
     graph.add_node("run_narrative_body", run_narrative_body_node)
     graph.add_node("validate_interface2", validate_interface2_node)
 
-    # Interface 3
-    graph.add_node("build_charts", build_charts_node)
-    graph.add_node("build_glossary", build_glossary_node)
-    graph.add_node("assemble_pages", assemble_pages_node)
+    # Interface 3 (8-Step Sequential + Output)
+    graph.add_node("run_theme", run_theme_node)
+    graph.add_node("run_pages", run_pages_node)
+    graph.add_node("run_hallcheck_pages", run_hallcheck_pages_node)
+    graph.add_node("run_glossary", run_glossary_node)
+    graph.add_node("run_hallcheck_glossary", run_hallcheck_glossary_node)
+    graph.add_node("run_tone_final", run_tone_final_node)
+    graph.add_node("run_chart_agent", run_chart_agent_node)
+    graph.add_node("run_hallcheck_chart", run_hallcheck_chart_node)
     graph.add_node("collect_sources", collect_sources_node)
-    graph.add_node("run_final_check", run_final_check_node)
     graph.add_node("assemble_output", assemble_output_node)
 
     # ── 엣지 ──
@@ -191,19 +201,21 @@ def build_graph() -> Any:
         {"continue": "validate_interface2", "end": END},
     )
 
-    # Interface 2 → Interface 3
+    # Interface 2 → Interface 3 (Sequential)
     graph.add_conditional_edges(
         "validate_interface2",
         check_error,
-        {"continue": "build_charts", "end": END},
+        {"continue": "run_theme", "end": END},
     )
-    graph.add_edge("build_charts", "build_glossary")
-    graph.add_edge("build_glossary", "assemble_pages")
-
-    # assemble → collect → final_check → output
-    graph.add_edge("assemble_pages", "collect_sources")
-    graph.add_edge("collect_sources", "run_final_check")
-    graph.add_edge("run_final_check", "assemble_output")
+    graph.add_edge("run_theme", "run_pages")
+    graph.add_edge("run_pages", "run_hallcheck_pages")
+    graph.add_edge("run_hallcheck_pages", "run_glossary")
+    graph.add_edge("run_glossary", "run_hallcheck_glossary")
+    graph.add_edge("run_hallcheck_glossary", "run_tone_final")
+    graph.add_edge("run_tone_final", "run_chart_agent")
+    graph.add_edge("run_chart_agent", "run_hallcheck_chart")
+    graph.add_edge("run_hallcheck_chart", "collect_sources")
+    graph.add_edge("collect_sources", "assemble_output")
     graph.add_edge("assemble_output", END)
 
     return graph.compile()

@@ -5,7 +5,6 @@ temperature: 0.3
 response_format: json_object
 system_message: >
   당신은 금융 에듀테인먼트 콘텐츠의 프레이밍 전문가입니다.
-  {{include:_tone_guide}}
 ---
 당신은 `interface_2_raw_narrative` 1단계 생성기입니다.
 목표는 `interface_1_curated_context`에서 핵심 프레이밍을 뽑아

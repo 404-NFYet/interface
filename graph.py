@@ -1,6 +1,6 @@
 """LangGraph StateGraph 정의: 데이터 수집 + 내러티브 생성 + 최종 조립 파이프라인.
 
-노드 흐름:
+노드 흐름 (22개):
   START → [라우터: input_path 유무]
     ├─ 파일 로드: load_curated_context → run_page_purpose ...
     └─ 데이터 수집: crawl_news → crawl_research → screen_stocks
@@ -8,9 +8,10 @@
         → build_curated_context → run_page_purpose ...
   ... → run_page_purpose → run_historical_case → run_narrative_body
     → validate_interface2
-    → build_charts → build_glossary
-    → assemble_pages → collect_sources → run_final_check
-    → assemble_output → END
+    → run_theme → run_pages → run_hallcheck_pages
+    → run_glossary → run_hallcheck_glossary → run_tone_final
+    → run_chart_agent → run_hallcheck_chart
+    → collect_sources → assemble_output → END
 """
 
 from __future__ import annotations
@@ -34,13 +35,16 @@ from .nodes.interface2 import (
     validate_interface2_node,
 )
 from .nodes.interface3 import (
-    assemble_output_node,
-    assemble_pages_node,
-    build_charts_node,
-    build_glossary_node,
+    run_theme_node,
+    run_pages_node,
+    run_hallcheck_pages_node,
+    run_glossary_node,
+    run_hallcheck_glossary_node,
+    run_tone_final_node,
     collect_sources_node,
-    run_final_check_node,
+    assemble_output_node,
 )
+from .nodes.chart_agent import run_chart_agent_node, run_hallcheck_chart_node
 from .nodes.screening import screen_stocks_node
 
 
@@ -75,11 +79,17 @@ class BriefingPipelineState(TypedDict):
     raw_narrative: Optional[dict]
 
     # Interface 3 중간 결과
+    i3_theme: Optional[dict]
+    i3_pages: Optional[list]
+    i3_validated: Optional[dict]
+    i3_glossaries: Optional[list]
+    i3_validated_glossaries: Optional[list]
     charts: Optional[dict]
-    glossaries: Optional[dict]
     pages: Optional[list]
     sources: Optional[list]
     hallucination_checklist: Optional[list]
+    theme: Optional[str]
+    one_liner: Optional[str]
 
     # 최종 출력
     full_output: Optional[dict]
@@ -130,12 +140,16 @@ def build_graph() -> Any:
     graph.add_node("run_narrative_body", run_narrative_body_node)
     graph.add_node("validate_interface2", validate_interface2_node)
 
-    # Interface 3
-    graph.add_node("build_charts", build_charts_node)
-    graph.add_node("build_glossary", build_glossary_node)
-    graph.add_node("assemble_pages", assemble_pages_node)
+    # Interface 3 (10노드 순차)
+    graph.add_node("run_theme", run_theme_node)
+    graph.add_node("run_pages", run_pages_node)
+    graph.add_node("run_hallcheck_pages", run_hallcheck_pages_node)
+    graph.add_node("run_glossary", run_glossary_node)
+    graph.add_node("run_hallcheck_glossary", run_hallcheck_glossary_node)
+    graph.add_node("run_tone_final", run_tone_final_node)
+    graph.add_node("run_chart_agent", run_chart_agent_node)
+    graph.add_node("run_hallcheck_chart", run_hallcheck_chart_node)
     graph.add_node("collect_sources", collect_sources_node)
-    graph.add_node("run_final_check", run_final_check_node)
     graph.add_node("assemble_output", assemble_output_node)
 
     # ── 엣지 ──
@@ -191,19 +205,21 @@ def build_graph() -> Any:
         {"continue": "validate_interface2", "end": END},
     )
 
-    # Interface 2 → Interface 3
+    # Interface 2 → Interface 3 (10노드 순차)
     graph.add_conditional_edges(
         "validate_interface2",
         check_error,
-        {"continue": "build_charts", "end": END},
+        {"continue": "run_theme", "end": END},
     )
-    graph.add_edge("build_charts", "build_glossary")
-    graph.add_edge("build_glossary", "assemble_pages")
-
-    # assemble → collect → final_check → output
-    graph.add_edge("assemble_pages", "collect_sources")
-    graph.add_edge("collect_sources", "run_final_check")
-    graph.add_edge("run_final_check", "assemble_output")
+    graph.add_edge("run_theme", "run_pages")
+    graph.add_edge("run_pages", "run_hallcheck_pages")
+    graph.add_edge("run_hallcheck_pages", "run_glossary")
+    graph.add_edge("run_glossary", "run_hallcheck_glossary")
+    graph.add_edge("run_hallcheck_glossary", "run_tone_final")
+    graph.add_edge("run_tone_final", "run_chart_agent")
+    graph.add_edge("run_chart_agent", "run_hallcheck_chart")
+    graph.add_edge("run_hallcheck_chart", "collect_sources")
+    graph.add_edge("collect_sources", "assemble_output")
     graph.add_edge("assemble_output", END)
 
     return graph.compile()

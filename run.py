@@ -120,11 +120,17 @@ def main() -> int:
         "narrative": None,
         "raw_narrative": None,
         # Interface 3
+        "i3_theme": None,
+        "i3_pages": None,
+        "i3_validated": None,
+        "i3_glossaries": None,
+        "i3_validated_glossaries": None,
         "charts": None,
-        "glossaries": None,
         "pages": None,
         "sources": None,
         "hallucination_checklist": None,
+        "theme": None,
+        "one_liner": None,
         # 출력
         "full_output": None,
         "output_path": None,

@@ -12,6 +12,9 @@ from interface.schemas import (
     CuratedContext,
     FinalBriefing,
     FullBriefingOutput,
+    Page,
+    Quiz,
+    QuizOption,
     RawNarrative,
 )
 
@@ -75,6 +78,41 @@ class TestFinalBriefing:
             assert page.step == i + 1
             assert page.title
             assert page.content
+
+
+class TestQuiz:
+    def test_page_with_quiz(self):
+        page = Page(
+            step=3,
+            title="과거 비슷한 사례",
+            purpose="역사적 선례",
+            content="테스트 콘텐츠",
+            bullets=["bullet1", "bullet2"],
+            quiz=Quiz(
+                context="테스트 상황",
+                question="질문?",
+                options=[
+                    QuizOption(id="A", label="옵션A", explanation="설명A"),
+                    QuizOption(id="B", label="옵션B", explanation="설명B"),
+                ],
+                correct_answer="A",
+                actual_result="실제 결과",
+                lesson="교훈",
+            ),
+        )
+        assert page.quiz is not None
+        assert page.quiz.correct_answer == "A"
+        assert len(page.quiz.options) == 2
+
+    def test_page_without_quiz(self):
+        page = Page(
+            step=1,
+            title="현재 배경",
+            purpose="배경 설명",
+            content="테스트",
+            bullets=["b1", "b2"],
+        )
+        assert page.quiz is None
 
 
 class TestFullBriefingOutput:

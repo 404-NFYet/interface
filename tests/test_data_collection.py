@@ -22,11 +22,17 @@ def _make_base_state(**overrides) -> dict:
         "historical_case": None,
         "narrative": None,
         "raw_narrative": None,
+        "i3_theme": None,
+        "i3_pages": None,
+        "i3_validated": None,
+        "i3_glossaries": None,
+        "i3_validated_glossaries": None,
         "charts": None,
-        "glossaries": None,
         "pages": None,
         "sources": None,
         "hallucination_checklist": None,
+        "theme": None,
+        "one_liner": None,
         "full_output": None,
         "output_path": None,
         "error": None,
@@ -150,7 +156,7 @@ class TestDataCollectionE2E:
     """데이터 수집 → Interface 2/3 통합 mock E2E."""
 
     def test_full_pipeline_mock_no_input(self):
-        """input_path=None, backend=mock으로 전체 18노드 파이프라인."""
+        """input_path=None, backend=mock으로 전체 22노드 파이프라인."""
         from interface.graph import build_graph
 
         graph = build_graph()

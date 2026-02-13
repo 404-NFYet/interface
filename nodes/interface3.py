@@ -1,6 +1,7 @@
-"""Interface 3 노드: 차트 생성, 용어사전, 페이지 조립, 출처 수집, 최종 검증.
+"""Interface 3 노드: theme → pages → hallcheck → glossary → hallcheck → tone_final → sources → output.
 
-viz_hint → Plotly JSON 변환, glossary 생성, 6페이지 조립, 출처 수집을 수행한다.
+viz 브랜치 아키텍처 + jihoon v11 프롬프트 기반 10노드 순차 파이프라인.
+(chart_agent 2노드는 nodes/chart_agent.py에 별도 정의)
 """
 
 from __future__ import annotations
@@ -15,7 +16,7 @@ from typing import Any
 from langsmith import traceable
 
 from ..ai.llm_utils import call_llm_with_prompt
-from ..config import COLOR_PALETTE, OUTPUT_DIR
+from ..config import COLOR_PALETTE, OUTPUT_DIR, SECTION_MAP
 from ..schemas import (
     CuratedContext,
     FinalBriefing,
@@ -25,15 +26,6 @@ from ..schemas import (
 
 logger = logging.getLogger(__name__)
 
-SECTION_MAP = [
-    (1, "현재 배경", "background"),
-    (2, "금융 개념 설명", "concept_explain"),
-    (3, "과거 비슷한 사례", "history"),
-    (4, "현재 상황에 적용", "application"),
-    (5, "주의해야 할 점", "caution"),
-    (6, "최종 정리", "summary"),
-]
-
 
 def _update_metrics(state: dict, node_name: str, elapsed: float, status: str = "success") -> dict:
     metrics = dict(state.get("metrics") or {})
@@ -41,17 +33,327 @@ def _update_metrics(state: dict, node_name: str, elapsed: float, status: str = "
     return metrics
 
 
-# ── Mock 함수들 ──
+# ────────────────────────────────────────────
+# 1. run_theme — refined theme + one_liner
+# ────────────────────────────────────────────
 
-def _mock_chart(section_key: str, viz_hint: str | None) -> dict | None:
-    """mock 모드 차트 — 최소한의 Plotly 구조."""
-    if not viz_hint:
-        return None
-    return {
-        "data": [{"x": ["A", "B", "C"], "y": [1, 2, 3], "type": "bar", "name": f"mock-{section_key}"}],
-        "layout": {"title": f"[Mock] {viz_hint}"},
-    }
+@traceable(name="run_theme", run_type="llm",
+           metadata={"phase": "interface_3", "phase_name": "테마 생성", "step": 1})
+def run_theme_node(state: dict) -> dict:
+    """validated_interface_2 → refined theme/one_liner."""
+    if state.get("error"):
+        return {"error": state["error"]}
 
+    node_start = time.time()
+    logger.info("[Node] run_theme")
+
+    try:
+        raw = state["raw_narrative"]
+        backend = state.get("backend", "live")
+
+        if backend == "mock":
+            result = {"theme": raw["theme"], "one_liner": raw["one_liner"]}
+        else:
+            result = call_llm_with_prompt("3_theme", {
+                "validated_interface_2": json.dumps(raw, ensure_ascii=False),
+            })
+
+        logger.info("  run_theme done: theme=%s", result.get("theme", "")[:50])
+        return {
+            "i3_theme": result,
+            "metrics": _update_metrics(state, "run_theme", time.time() - node_start),
+        }
+
+    except Exception as e:
+        logger.error("  run_theme failed: %s", e, exc_info=True)
+        return {
+            "error": f"run_theme failed: {e}",
+            "metrics": _update_metrics(state, "run_theme", time.time() - node_start, "failed"),
+        }
+
+
+# ────────────────────────────────────────────
+# 2. run_pages — 6 pages (no chart)
+# ────────────────────────────────────────────
+
+@traceable(name="run_pages", run_type="llm",
+           metadata={"phase": "interface_3", "phase_name": "페이지 생성", "step": 2})
+def run_pages_node(state: dict) -> dict:
+    """validated_interface_2 → 6 pages."""
+    if state.get("error"):
+        return {"error": state["error"]}
+
+    node_start = time.time()
+    logger.info("[Node] run_pages")
+
+    try:
+        raw = state["raw_narrative"]
+        backend = state.get("backend", "live")
+
+        if backend == "mock":
+            narrative = raw["narrative"]
+            pages = []
+            for step, title, section_key in SECTION_MAP:
+                section = narrative[section_key]
+                pages.append({
+                    "step": step,
+                    "title": title,
+                    "purpose": section["purpose"],
+                    "content": section["content"],
+                    "bullets": section["bullets"][:2],
+                })
+            result = {"pages": pages}
+        else:
+            result = call_llm_with_prompt("3_pages", {
+                "validated_interface_2": json.dumps(raw, ensure_ascii=False),
+            })
+
+        page_count = len(result.get("pages", []))
+        logger.info("  run_pages done: %d pages", page_count)
+        return {
+            "i3_pages": result.get("pages", []),
+            "metrics": _update_metrics(state, "run_pages", time.time() - node_start),
+        }
+
+    except Exception as e:
+        logger.error("  run_pages failed: %s", e, exc_info=True)
+        return {
+            "error": f"run_pages failed: {e}",
+            "metrics": _update_metrics(state, "run_pages", time.time() - node_start, "failed"),
+        }
+
+
+# ────────────────────────────────────────────
+# 3. run_hallcheck_pages — corrective hallcheck
+# ────────────────────────────────────────────
+
+@traceable(name="run_hallcheck_pages", run_type="llm",
+           metadata={"phase": "interface_3", "phase_name": "페이지 검증", "step": 3})
+def run_hallcheck_pages_node(state: dict) -> dict:
+    """theme + pages 검증 → validated_theme/one_liner/pages 반환."""
+    if state.get("error"):
+        return {"error": state["error"]}
+
+    node_start = time.time()
+    logger.info("[Node] run_hallcheck_pages")
+
+    try:
+        raw = state["raw_narrative"]
+        i3_theme = state["i3_theme"]
+        i3_pages = state["i3_pages"]
+        backend = state.get("backend", "live")
+
+        if backend == "mock":
+            result = {
+                "overall_risk": "low",
+                "summary": "mock — 검증 미수행",
+                "issues": [],
+                "consistency_checks": [],
+                "validated_theme": i3_theme.get("theme", raw["theme"]),
+                "validated_one_liner": i3_theme.get("one_liner", raw["one_liner"]),
+                "validated_pages": i3_pages,
+            }
+        else:
+            result = call_llm_with_prompt("3_hallcheck_pages", {
+                "validated_interface_2": json.dumps(raw, ensure_ascii=False),
+                "theme_output": json.dumps(i3_theme, ensure_ascii=False),
+                "pages_output": json.dumps(i3_pages, ensure_ascii=False),
+            })
+
+        risk = result.get("overall_risk", "unknown")
+        issue_count = len(result.get("issues", []))
+        logger.info("  run_hallcheck_pages done: risk=%s, issues=%d", risk, issue_count)
+
+        return {
+            "i3_validated": result,
+            "metrics": _update_metrics(state, "run_hallcheck_pages", time.time() - node_start),
+        }
+
+    except Exception as e:
+        logger.error("  run_hallcheck_pages failed: %s", e, exc_info=True)
+        return {
+            "error": f"run_hallcheck_pages failed: {e}",
+            "metrics": _update_metrics(state, "run_hallcheck_pages", time.time() - node_start, "failed"),
+        }
+
+
+# ────────────────────────────────────────────
+# 4. run_glossary — page_glossaries
+# ────────────────────────────────────────────
+
+@traceable(name="run_glossary", run_type="llm",
+           metadata={"phase": "interface_3", "phase_name": "용어 생성", "step": 4})
+def run_glossary_node(state: dict) -> dict:
+    """validated_pages → page_glossaries."""
+    if state.get("error"):
+        return {"error": state["error"]}
+
+    node_start = time.time()
+    logger.info("[Node] run_glossary")
+
+    try:
+        raw = state["raw_narrative"]
+        validated = state["i3_validated"]
+        validated_pages = validated.get("validated_pages", [])
+        backend = state.get("backend", "live")
+
+        if backend == "mock":
+            page_glossaries = []
+            for step, _, section_key in SECTION_MAP:
+                page_glossaries.append({
+                    "step": step,
+                    "glossary": [
+                        {"term": f"용어-{section_key}", "definition": "mock 정의예요.", "domain": "일반"}
+                    ],
+                })
+            result = {"page_glossaries": page_glossaries}
+        else:
+            result = call_llm_with_prompt("3_glossary", {
+                "validated_interface_2": json.dumps(raw, ensure_ascii=False),
+                "validated_pages": json.dumps(validated_pages, ensure_ascii=False),
+            })
+
+        glossary_count = sum(
+            len(pg.get("glossary", []))
+            for pg in result.get("page_glossaries", [])
+        )
+        logger.info("  run_glossary done: %d terms across 6 pages", glossary_count)
+
+        return {
+            "i3_glossaries": result.get("page_glossaries", []),
+            "metrics": _update_metrics(state, "run_glossary", time.time() - node_start),
+        }
+
+    except Exception as e:
+        logger.error("  run_glossary failed: %s", e, exc_info=True)
+        return {
+            "error": f"run_glossary failed: {e}",
+            "metrics": _update_metrics(state, "run_glossary", time.time() - node_start, "failed"),
+        }
+
+
+# ────────────────────────────────────────────
+# 5. run_hallcheck_glossary — validated_page_glossaries
+# ────────────────────────────────────────────
+
+@traceable(name="run_hallcheck_glossary", run_type="llm",
+           metadata={"phase": "interface_3", "phase_name": "용어 검증", "step": 5})
+def run_hallcheck_glossary_node(state: dict) -> dict:
+    """page_glossaries 검증 → validated_page_glossaries 반환."""
+    if state.get("error"):
+        return {"error": state["error"]}
+
+    node_start = time.time()
+    logger.info("[Node] run_hallcheck_glossary")
+
+    try:
+        raw = state["raw_narrative"]
+        validated = state["i3_validated"]
+        validated_pages = validated.get("validated_pages", [])
+        i3_glossaries = state["i3_glossaries"]
+        backend = state.get("backend", "live")
+
+        if backend == "mock":
+            result = {
+                "overall_risk": "low",
+                "summary": "mock — 검증 미수행",
+                "issues": [],
+                "validated_page_glossaries": i3_glossaries,
+            }
+        else:
+            result = call_llm_with_prompt("3_hallcheck_glossary", {
+                "validated_interface_2": json.dumps(raw, ensure_ascii=False),
+                "validated_pages": json.dumps(validated_pages, ensure_ascii=False),
+                "page_glossaries": json.dumps(i3_glossaries, ensure_ascii=False),
+            })
+
+        risk = result.get("overall_risk", "unknown")
+        logger.info("  run_hallcheck_glossary done: risk=%s", risk)
+
+        return {
+            "i3_validated_glossaries": result.get("validated_page_glossaries", i3_glossaries),
+            "metrics": _update_metrics(state, "run_hallcheck_glossary", time.time() - node_start),
+        }
+
+    except Exception as e:
+        logger.error("  run_hallcheck_glossary failed: %s", e, exc_info=True)
+        return {
+            "error": f"run_hallcheck_glossary failed: {e}",
+            "metrics": _update_metrics(state, "run_hallcheck_glossary", time.time() - node_start, "failed"),
+        }
+
+
+# ────────────────────────────────────────────
+# 6. run_tone_final — merge pages + glossaries, tone correction
+# ────────────────────────────────────────────
+
+@traceable(name="run_tone_final", run_type="llm",
+           metadata={"phase": "interface_3", "phase_name": "톤 보정", "step": 6})
+def run_tone_final_node(state: dict) -> dict:
+    """validated pages + glossaries → final merged pages with tone correction."""
+    if state.get("error"):
+        return {"error": state["error"]}
+
+    node_start = time.time()
+    logger.info("[Node] run_tone_final")
+
+    try:
+        validated = state["i3_validated"]
+        validated_pages = validated.get("validated_pages", [])
+        validated_theme = validated.get("validated_theme", "")
+        validated_one_liner = validated.get("validated_one_liner", "")
+        validated_glossaries = state["i3_validated_glossaries"]
+        backend = state.get("backend", "live")
+
+        if backend == "mock":
+            # Simple merge without LLM
+            glossary_map = {
+                pg["step"]: pg.get("glossary", [])
+                for pg in validated_glossaries
+            }
+            merged_pages = []
+            for page in validated_pages:
+                merged_page = dict(page)
+                merged_page["glossary"] = glossary_map.get(page["step"], [])
+                merged_pages.append(merged_page)
+
+            result = {
+                "interface_3_final_briefing": {
+                    "theme": validated_theme,
+                    "one_liner": validated_one_liner,
+                    "pages": merged_pages,
+                }
+            }
+        else:
+            result = call_llm_with_prompt("3_tone_final", {
+                "validated_theme": validated_theme,
+                "validated_one_liner": validated_one_liner,
+                "validated_pages": json.dumps(validated_pages, ensure_ascii=False),
+                "validated_page_glossaries": json.dumps(validated_glossaries, ensure_ascii=False),
+            })
+
+        briefing = result.get("interface_3_final_briefing", {})
+        page_count = len(briefing.get("pages", []))
+        logger.info("  run_tone_final done: %d pages merged", page_count)
+
+        return {
+            "pages": briefing.get("pages", []),
+            "theme": briefing.get("theme", validated_theme),
+            "one_liner": briefing.get("one_liner", validated_one_liner),
+            "metrics": _update_metrics(state, "run_tone_final", time.time() - node_start),
+        }
+
+    except Exception as e:
+        logger.error("  run_tone_final failed: %s", e, exc_info=True)
+        return {
+            "error": f"run_tone_final failed: {e}",
+            "metrics": _update_metrics(state, "run_tone_final", time.time() - node_start, "failed"),
+        }
+
+
+# ────────────────────────────────────────────
+# 9. collect_sources — deterministic
+# ────────────────────────────────────────────
 
 _STOPWORDS = frozenset({
     "하는", "있는", "이는", "했다", "한다", "되는", "이다", "에서", "으로", "부터",
@@ -66,183 +368,10 @@ def _extract_keywords(text: str) -> list[str]:
     return [w for w in words if w not in _STOPWORDS and len(w) >= 2]
 
 
-def _mock_glossary(section_key: str, content: str) -> list[dict]:
-    """mock 모드 용어사전."""
-    return [
-        {"term": f"용어-{section_key}", "definition": "mock 모드 정의예요.", "domain": "일반"}
-    ]
-
-
-# ── LangGraph 노드들 ──
-
-@traceable(name="build_charts", run_type="llm",
-           metadata={"phase": "interface_3", "phase_name": "최종 조립", "step": 1})
-def build_charts_node(state: dict) -> dict:
-    """viz_hint → Plotly JSON 변환."""
-    if state.get("error"):
-        return {"error": state["error"]}
-
-    node_start = time.time()
-    logger.info("[Node] build_charts")
-
-    try:
-        raw = state["raw_narrative"]
-        curated = state["curated_context"]
-        narrative = raw["narrative"]
-        backend = state.get("backend", "live")
-
-        charts: dict[str, Any] = {}
-        previous_charts_summary: list[str] = []
-
-        for _, _, section_key in SECTION_MAP:
-            section = narrative[section_key]
-            viz_hint = section.get("viz_hint")
-
-            if not viz_hint:
-                charts[section_key] = None
-                continue
-
-            if backend == "mock":
-                charts[section_key] = _mock_chart(section_key, viz_hint)
-            else:
-                result = call_llm_with_prompt("chart_generation", {
-                    "viz_hint": viz_hint,
-                    "section_key": section_key,
-                    "content": section["content"],
-                    "bullets": section["bullets"],
-                    "stocks": curated.get("selected_stocks", []),
-                    "news": curated.get("verified_news", []),
-                    "color_palette": COLOR_PALETTE,
-                    "previous_charts": "\n".join(previous_charts_summary) or "없음",
-                })
-                charts[section_key] = result
-
-            # 이전 차트 요약 누적 (다음 차트 생성 시 중복 방지)
-            if charts.get(section_key):
-                chart = charts[section_key]
-                chart_type = chart.get("data", [{}])[0].get("type", "unknown")
-                chart_title = chart.get("layout", {}).get("title", "")
-                previous_charts_summary.append(
-                    f"- {section_key}: type={chart_type}, title={chart_title}"
-                )
-
-        logger.info("  build_charts 완료: %d 차트 생성", sum(1 for v in charts.values() if v))
-        return {
-            "charts": charts,
-            "metrics": _update_metrics(state, "build_charts", time.time() - node_start),
-        }
-
-    except Exception as e:
-        logger.error("  build_charts 실패: %s", e)
-        return {
-            "error": f"build_charts 실패: {e}",
-            "metrics": _update_metrics(state, "build_charts", time.time() - node_start, "failed"),
-        }
-
-
-@traceable(name="build_glossary", run_type="llm",
-           metadata={"phase": "interface_3", "phase_name": "최종 조립", "step": 2})
-def build_glossary_node(state: dict) -> dict:
-    """페이지별 용어사전 생성."""
-    if state.get("error"):
-        return {"error": state["error"]}
-
-    node_start = time.time()
-    logger.info("[Node] build_glossary")
-
-    try:
-        raw = state["raw_narrative"]
-        narrative = raw["narrative"]
-        backend = state.get("backend", "live")
-
-        glossaries: dict[str, list] = {}
-        seen_terms: set[str] = set()
-
-        for _, _, section_key in SECTION_MAP:
-            section = narrative[section_key]
-
-            if backend == "mock":
-                items = _mock_glossary(section_key, section["content"])
-            else:
-                result = call_llm_with_prompt("glossary_generation", {
-                    "section_key": section_key,
-                    "content": section["content"],
-                    "bullets": section["bullets"],
-                    "existing_terms": list(seen_terms),
-                })
-                items = result.get("glossary", [])
-
-            # 중복 제거
-            filtered = []
-            for item in items:
-                term = item.get("term", "")
-                if term and term not in seen_terms:
-                    seen_terms.add(term)
-                    filtered.append(item)
-            glossaries[section_key] = filtered
-
-        logger.info("  build_glossary 완료: 총 %d 용어", len(seen_terms))
-        return {
-            "glossaries": glossaries,
-            "metrics": _update_metrics(state, "build_glossary", time.time() - node_start),
-        }
-
-    except Exception as e:
-        logger.error("  build_glossary 실패: %s", e)
-        return {
-            "error": f"build_glossary 실패: {e}",
-            "metrics": _update_metrics(state, "build_glossary", time.time() - node_start, "failed"),
-        }
-
-
-@traceable(name="assemble_pages", run_type="tool",
-           metadata={"phase": "interface_3", "phase_name": "최종 조립", "step": 3})
-def assemble_pages_node(state: dict) -> dict:
-    """6페이지 조립 (결정론적)."""
-    if state.get("error"):
-        return {"error": state["error"]}
-
-    node_start = time.time()
-    logger.info("[Node] assemble_pages")
-
-    try:
-        raw = state["raw_narrative"]
-        narrative = raw["narrative"]
-        charts = state.get("charts", {})
-        glossaries = state.get("glossaries", {})
-
-        pages = []
-        for step, title, section_key in SECTION_MAP:
-            section = narrative[section_key]
-            page = {
-                "step": step,
-                "title": title,
-                "purpose": section["purpose"],
-                "content": section["content"],
-                "bullets": section["bullets"],
-                "chart": charts.get(section_key),
-                "glossary": glossaries.get(section_key, []),
-            }
-            pages.append(page)
-
-        logger.info("  assemble_pages 완료: %d pages", len(pages))
-        return {
-            "pages": pages,
-            "metrics": _update_metrics(state, "assemble_pages", time.time() - node_start),
-        }
-
-    except Exception as e:
-        logger.error("  assemble_pages 실패: %s", e)
-        return {
-            "error": f"assemble_pages 실패: {e}",
-            "metrics": _update_metrics(state, "assemble_pages", time.time() - node_start, "failed"),
-        }
-
-
 @traceable(name="collect_sources", run_type="tool",
-           metadata={"phase": "interface_3", "phase_name": "최종 조립", "step": 4})
+           metadata={"phase": "interface_3", "phase_name": "출처 수집", "step": 9})
 def collect_sources_node(state: dict) -> dict:
-    """출처 수집 (결정론적)."""
+    """출처 수집 (결정론적). chart_agent가 추가한 sources도 병합."""
     if state.get("error"):
         return {"error": state["error"]}
 
@@ -258,7 +387,6 @@ def collect_sources_node(state: dict) -> dict:
         for news in curated.get("verified_news", []):
             url = news.get("url", "")
             source_name = news.get("source", "")
-            # 도메인 추출
             domain = url.split("//")[-1].split("/")[0] if "//" in url else url.split("/")[0]
             domain = domain.replace("www.", "")
 
@@ -279,7 +407,7 @@ def collect_sources_node(state: dict) -> dict:
                     "used_in_pages": [],
                 }
 
-        # 소스별 키워드 추출 (뉴스 제목/요약에서)
+        # 소스별 키워드 추출
         source_keywords: dict[str, list[str]] = {}
         for news in curated.get("verified_news", []):
             sname = news.get("source", "")
@@ -299,86 +427,52 @@ def collect_sources_node(state: dict) -> dict:
 
         # 페이지별 출처 매칭 (키워드 기반)
         for page in pages:
-            page_text = (
-                page.get("content", "") + " " + " ".join(page.get("bullets", []))
-            )
+            page_text = page.get("content", "") + " " + " ".join(page.get("bullets", []))
             for sname, sinfo in source_map.items():
                 keywords = source_keywords.get(sname, [])
-                # 키워드 중 2개 이상이 페이지에 등장하면 매칭
                 match_count = sum(1 for kw in keywords if kw in page_text)
-                if match_count >= 2:
-                    if page["step"] not in sinfo["used_in_pages"]:
-                        sinfo["used_in_pages"].append(page["step"])
+                if match_count >= 2 and page["step"] not in sinfo["used_in_pages"]:
+                    sinfo["used_in_pages"].append(page["step"])
 
-        # used_in_pages가 비어있는 것도 포함 (최소 1페이지 배정)
+        # used_in_pages가 비어있으면 1페이지 배정
         sources = list(source_map.values())
         for s in sources:
             if not s["used_in_pages"]:
                 s["used_in_pages"] = [1]
 
-        logger.info("  collect_sources 완료: %d sources", len(sources))
+        # chart_agent가 추가한 sources 병합
+        chart_sources = state.get("sources") or []
+        for cs in chart_sources:
+            existing = next((s for s in sources if s["name"] == cs.get("name")), None)
+            if existing:
+                for pg in cs.get("used_in_pages", []):
+                    if pg not in existing["used_in_pages"]:
+                        existing["used_in_pages"].append(pg)
+            else:
+                sources.append(cs)
+
+        logger.info("  collect_sources done: %d sources", len(sources))
         return {
             "sources": sources,
             "metrics": _update_metrics(state, "collect_sources", time.time() - node_start),
         }
 
     except Exception as e:
-        logger.error("  collect_sources 실패: %s", e)
+        logger.error("  collect_sources failed: %s", e, exc_info=True)
         return {
-            "error": f"collect_sources 실패: {e}",
+            "error": f"collect_sources failed: {e}",
             "metrics": _update_metrics(state, "collect_sources", time.time() - node_start, "failed"),
         }
 
 
-@traceable(name="run_final_check", run_type="llm",
-           metadata={"phase": "interface_3", "phase_name": "최종 조립", "step": 5})
-def run_final_check_node(state: dict) -> dict:
-    """최종 할루시네이션 체크리스트 생성."""
-    if state.get("error"):
-        return {"error": state["error"]}
-
-    node_start = time.time()
-    logger.info("[Node] run_final_check")
-
-    try:
-        curated = state["curated_context"]
-        pages = state["pages"]
-        backend = state.get("backend", "live")
-
-        if backend == "mock":
-            checklist = [
-                {
-                    "claim": "mock 모드 — 실제 검증 미수행",
-                    "source": "mock",
-                    "risk": "낮음",
-                    "note": "실제 LLM 호출 시 검증이 수행됩니다.",
-                }
-            ]
-        else:
-            result = call_llm_with_prompt("final_hallucination", {
-                "curated_context": curated,
-                "pages": pages,
-            })
-            checklist = result.get("hallucination_checklist", [])
-
-        logger.info("  run_final_check 완료: %d items", len(checklist))
-        return {
-            "hallucination_checklist": checklist,
-            "metrics": _update_metrics(state, "run_final_check", time.time() - node_start),
-        }
-
-    except Exception as e:
-        logger.error("  run_final_check 실패: %s", e)
-        return {
-            "error": f"run_final_check 실패: {e}",
-            "metrics": _update_metrics(state, "run_final_check", time.time() - node_start, "failed"),
-        }
-
+# ────────────────────────────────────────────
+# 10. assemble_output — Pydantic validation + JSON save
+# ────────────────────────────────────────────
 
 @traceable(name="assemble_output", run_type="tool",
-           metadata={"phase": "interface_3", "phase_name": "최종 조립", "step": 6})
+           metadata={"phase": "interface_3", "phase_name": "최종 조립", "step": 10})
 def assemble_output_node(state: dict) -> dict:
-    """최종 JSON 조립 + Pydantic 검증 + 파일 저장."""
+    """tone_final pages + charts 병합 → Pydantic 검증 → JSON 저장."""
     if state.get("error"):
         return {"error": state["error"]}
 
@@ -389,13 +483,27 @@ def assemble_output_node(state: dict) -> dict:
         raw_narrative = state["raw_narrative"]
         curated = state["curated_context"]
         pages = state["pages"]
+        charts = state.get("charts") or {}
         sources = state.get("sources", [])
         checklist = state.get("hallucination_checklist", [])
+        theme = state.get("theme", raw_narrative["theme"])
+        one_liner = state.get("one_liner", raw_narrative["one_liner"])
+
+        # charts를 pages에 병합
+        for page in pages:
+            step = page["step"]
+            section_key = next(
+                (sk for s, _, sk in SECTION_MAP if s == step), None
+            )
+            if section_key and charts.get(section_key):
+                page["chart"] = charts[section_key]
+            elif "chart" not in page:
+                page["chart"] = None
 
         # FinalBriefing 조립
         final_briefing_data = {
-            "theme": raw_narrative["theme"],
-            "one_liner": raw_narrative["one_liner"],
+            "theme": theme,
+            "one_liner": one_liner,
             "generated_at": datetime.now().strftime("%Y-%m-%dT%H:%M:%S"),
             "pages": pages,
             "sources": sources,
@@ -404,7 +512,7 @@ def assemble_output_node(state: dict) -> dict:
 
         # Pydantic 검증
         output = FullBriefingOutput(
-            topic=raw_narrative["theme"],
+            topic=theme,
             interface_1_curated_context=CuratedContext.model_validate(curated),
             interface_2_raw_narrative=RawNarrative.model_validate(raw_narrative),
             interface_3_final_briefing=FinalBriefing.model_validate(final_briefing_data),
@@ -419,7 +527,7 @@ def assemble_output_node(state: dict) -> dict:
             encoding="utf-8",
         )
 
-        logger.info("  assemble_output 완료: %s", output_path)
+        logger.info("  assemble_output done: %s", output_path)
         return {
             "full_output": output.model_dump(),
             "output_path": str(output_path),
@@ -427,8 +535,8 @@ def assemble_output_node(state: dict) -> dict:
         }
 
     except Exception as e:
-        logger.error("  assemble_output 실패: %s", e)
+        logger.error("  assemble_output failed: %s", e, exc_info=True)
         return {
-            "error": f"assemble_output 실패: {e}",
+            "error": f"assemble_output failed: {e}",
             "metrics": _update_metrics(state, "assemble_output", time.time() - node_start, "failed"),
         }

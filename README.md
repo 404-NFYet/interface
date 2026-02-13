@@ -1,6 +1,6 @@
 # Interface 파이프라인
 
-실시간 데이터 수집(뉴스 크롤링, 주가 스크리닝, GPT-5.2 웹서치 큐레이션)부터 최종 브리핑 생성까지 18개 노드로 구성된 LangGraph 파이프라인.
+실시간 데이터 수집(뉴스 크롤링, 주가 스크리닝, GPT-5.2 웹서치 큐레이션)부터 최종 브리핑 생성까지 22개 노드로 구성된 LangGraph 파이프라인.
 
 ## 목차
 
@@ -20,36 +20,38 @@
 ## 아키텍처 개요
 
 ```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                          LangGraph StateGraph (18 nodes)                    │
-│                                                                             │
-│  START → [라우터: --input 유무?]                                             │
-│            │                          │                                      │
-│          YES (파일 로드)             NO (실시간 데이터 수집, 기본)              │
-│            │                          │                                      │
-│   ┌────────────────┐    ┌─────────────────────────────────────────┐         │
-│   │ load_curated   │    │ crawl_news → crawl_research             │         │
-│   │ _context       │    │   → screen_stocks                       │         │
-│   └───────┬────────┘    │   → summarize_news → summarize_research │         │
-│           │              │   → curate_topics → build_curated_ctx  │         │
-│           │              └──────────────┬──────────────────────────┘         │
-│           │                             │                                    │
-│           └──────── merge point ────────┘                                    │
-│                         │                                                    │
-│  ┌──────────────────────────────────────────────────────────┐               │
-│  │                    Interface 2                             │               │
-│  │  page_purpose → historical_case → narrative_body          │               │
-│  │    → validate_interface2                                   │               │
-│  └───────────────────────┬──────────────────────────────────┘               │
-│                          │                                                   │
-│  ┌───────────────────────────────────────────────────────────┐              │
-│  │                    Interface 3                              │              │
-│  │  build_charts → build_glossary → assemble_pages            │              │
-│  │    → collect_sources → run_final_check → assemble_output   │              │
-│  └───────────────────────┬───────────────────────────────────┘              │
-│                          │                                                   │
-│                  briefing_YYYYMMDD.json                                      │
-└─────────────────────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────────────────┐
+│                          LangGraph StateGraph (22 nodes)                      │
+│                                                                              │
+│  START → [라우터: --input 유무?]                                              │
+│            │                          │                                       │
+│          YES (파일 로드)             NO (실시간 데이터 수집, 기본)               │
+│            │                          │                                       │
+│   ┌────────────────┐    ┌─────────────────────────────────────────┐          │
+│   │ load_curated   │    │ crawl_news → crawl_research             │          │
+│   │ _context       │    │   → screen_stocks                       │          │
+│   └───────┬────────┘    │   → summarize_news → summarize_research │          │
+│           │              │   → curate_topics → build_curated_ctx  │          │
+│           │              └──────────────┬──────────────────────────┘          │
+│           │                             │                                     │
+│           └──────── merge point ────────┘                                     │
+│                         │                                                     │
+│  ┌──────────────────────────────────────────────────────────┐                │
+│  │                    Interface 2 (4 nodes)                   │                │
+│  │  page_purpose → historical_case → narrative_body           │                │
+│  │    → validate_interface2                                    │                │
+│  └───────────────────────┬──────────────────────────────────┘                │
+│                          │                                                    │
+│  ┌───────────────────────────────────────────────────────────────────┐       │
+│  │                    Interface 3 (10 nodes)                          │       │
+│  │  run_theme → run_pages → hallcheck_pages                           │       │
+│  │    → run_glossary → hallcheck_glossary → tone_final                │       │
+│  │    → chart_agent → hallcheck_chart                                 │       │
+│  │    → collect_sources → assemble_output                             │       │
+│  └───────────────────────┬───────────────────────────────────────────┘       │
+│                          │                                                    │
+│                  briefing_YYYYMMDD.json                                       │
+└──────────────────────────────────────────────────────────────────────────────┘
 ```
 
 ### 핵심 설계 원칙
@@ -58,7 +60,7 @@
 2. **2-Phase 요약**: GPT-5 mini Map/Reduce (Phase 1) + GPT-5.2 Web Search (Phase 2) 아키텍처
 3. **Pydantic 계약**: 각 인터페이스의 입출력은 `schemas.py`의 Pydantic v2 모델로 강제 검증
 4. **LangSmith 트레이싱**: 모든 노드에 `@traceable(metadata={"phase": "...", "step": N})`으로 계층적 추적
-5. **mock 백엔드**: API 호출 없이 전체 18노드 파이프라인 구조를 테스트 가능
+5. **mock 백엔드**: API 호출 없이 전체 22노드 파이프라인 구조를 테스트 가능
 6. **하위 호환**: `--input`으로 기존 JSON 파일을 전달하면 파일 로드 경로로 동작 (기존 11노드)
 
 ---
@@ -70,7 +72,7 @@ interface/
 ├── __init__.py
 ├── config.py                      # 환경변수, API 키, 스크리닝/모델 설정
 ├── schemas.py                     # Pydantic 모델 (데이터 수집 + 3개 인터페이스 계약)
-├── graph.py                       # LangGraph StateGraph 정의 (18노드, 라우터)
+├── graph.py                       # LangGraph StateGraph 정의 (22노드, 라우터)
 ├── run.py                         # CLI 진입점
 │
 ├── data_collection/               # 데이터 수집 유틸리티 (v2)
@@ -84,7 +86,8 @@ interface/
 │
 ├── ai/
 │   ├── multi_provider_client.py   # OpenAI/Perplexity/Anthropic 통합 클라이언트
-│   └── llm_utils.py              # prompt_loader 연동 + JSON 추출 헬퍼
+│   ├── llm_utils.py              # prompt_loader 연동 + JSON 추출 헬퍼
+│   └── tools.py                  # Chart Agent 도구 (DART/ECOS/웹검색)
 │
 ├── prompts/
 │   ├── prompt_loader.py           # .md 프롬프트 파싱 (frontmatter + 변수 치환)
@@ -95,9 +98,18 @@ interface/
 │       ├── historical_case.md     # [I2-2] 과거 사례 매칭
 │       ├── narrative_body.md      # [I2-3] 6단계 내러티브 본문
 │       ├── hallucination_check.md # [I2-4] 팩트체크 + validated_interface_2
-│       ├── chart_generation.md    # [I3] viz_hint → Plotly JSON
-│       ├── glossary_generation.md # [I3] 페이지별 용어사전
-│       └── final_hallucination.md # [I3] 최종 팩트체크 리스트
+│       ├── chart_generation.md    # [I3-legacy] viz_hint → Plotly JSON
+│       ├── glossary_generation.md # [I3-legacy] 페이지별 용어사전
+│       ├── final_hallucination.md # [I3-legacy] 최종 팩트체크 리스트
+│       ├── 3_theme.md            # [I3-1] theme + one_liner 정제
+│       ├── 3_pages.md            # [I3-2] 6페이지 생성
+│       ├── 3_hallcheck_pages.md  # [I3-3] 페이지 팩트체크 (교정형)
+│       ├── 3_glossary.md         # [I3-4] 페이지별 용어사전
+│       ├── 3_hallcheck_glossary.md # [I3-5] 용어 팩트체크
+│       ├── 3_tone_final.md       # [I3-6] 톤 보정 + 병합
+│       ├── 3_chart_reasoning.md  # [I3-7] Chart Agent 추론
+│       ├── 3_chart_generation.md # [I3-7] Chart Agent 생성
+│       └── 3_hallcheck_chart.md  # [I3-8] 차트 팩트체크
 │
 ├── nodes/
 │   ├── crawlers.py                # 뉴스/리포트 크롤링 노드 (2개)
@@ -105,12 +117,14 @@ interface/
 │   ├── curation.py                # 요약 + 큐레이션 + context 빌드 (4개)
 │   ├── interface1.py              # load_curated_context 노드
 │   ├── interface2.py              # 4개 노드 + mock 함수
-│   └── interface3.py              # 6개 노드 + mock 함수
+│   ├── interface3.py              # 8개 노드 (theme/pages/hallcheck/glossary/tone/sources/output)
+│   └── chart_agent.py             # 2개 노드 (chart_agent + hallcheck_chart)
 │
 ├── output/                        # 생성된 브리핑 JSON
 └── tests/
-    ├── test_schemas.py            # Pydantic 스키마 검증 (8개 테스트)
-    ├── test_nodes.py              # Interface 2/3 노드 테스트 (8개 테스트)
+    ├── test_schemas.py            # Pydantic 스키마 검증 (10개 테스트)
+    ├── test_nodes.py              # Interface 2/3 노드 테스트 (12개 테스트)
+    ├── test_chart_agent.py        # Chart Agent 노드 테스트 (3개 테스트)
     ├── test_data_collection.py    # 데이터 수집 노드 + E2E 테스트 (13개 테스트)
     └── test_data_collection_utils.py  # 유틸리티 단위 테스트 (15개 테스트)
 ```
@@ -169,7 +183,7 @@ python -m interface.run --input output/curated_ALL.json --topic-index 2
 
 ## 파이프라인 흐름 상세
 
-### 18개 노드 실행 순서
+### 22개 노드 실행 순서
 
 ```
 START
@@ -203,12 +217,16 @@ START
   [9]  run_historical_case     ← LLM: 과거 사례 매칭
   [10] run_narrative_body      ← LLM: 6단계 내러티브 본문 생성
   [11] validate_interface2     ← LLM: 할루시네이션 체크 + RawNarrative 조립
-  [12] build_charts            ← LLM: viz_hint → Plotly JSON (섹션별)
-  [13] build_glossary          ← LLM: 페이지별 용어사전 (중복 제거)
-  [14] assemble_pages          ← 결정론적: 6페이지 조립
-  [15] collect_sources         ← 결정론적: 출처 수집
-  [16] run_final_check         ← LLM: 최종 할루시네이션 체크리스트
-  [17] assemble_output         ← 결정론적: FullBriefingOutput JSON 저장
+  [12] run_theme               ← LLM: theme/one_liner 정제
+  [13] run_pages               ← LLM: 6페이지 생성 (chart 없음)
+  [14] run_hallcheck_pages     ← LLM: 교정형 팩트체크 (validated 반환)
+  [15] run_glossary            ← LLM: 페이지별 용어사전
+  [16] run_hallcheck_glossary  ← LLM: 용어 팩트체크
+  [17] run_tone_final          ← LLM: pages + glossary 병합, 톤 보정
+  [18] run_chart_agent         ← LLM: Reasoning → Tool → Plotly 생성
+  [19] run_hallcheck_chart     ← LLM: 차트 데이터 팩트체크
+  [20] collect_sources         ← 결정론적: 출처 수집 + 차트 소스 병합
+  [21] assemble_output         ← 결정론적: Pydantic 검증 + JSON 저장
                           │
                           ▼
                          END
@@ -229,12 +247,16 @@ START
 | 9 | run_historical_case | interface_2 | O | Claude Sonnet | 과거 사례 매칭 |
 | 10 | run_narrative_body | interface_2 | O | Claude Sonnet | 6단계 내러티브 |
 | 11 | validate_interface2 | interface_2 | O | Claude Sonnet | 팩트체크 + 조립 |
-| 12 | build_charts | interface_3 | O | GPT-4o-mini | Plotly JSON 생성 |
-| 13 | build_glossary | interface_3 | O | GPT-4o-mini | 용어사전 |
-| 14 | assemble_pages | interface_3 | - | - | 6페이지 조립 |
-| 15 | collect_sources | interface_3 | - | - | 출처 매칭 |
-| 16 | run_final_check | interface_3 | O | Claude Sonnet | 최종 팩트체크 |
-| 17 | assemble_output | interface_3 | - | - | JSON 저장 |
+| 12 | run_theme | interface_3 | O | Claude Sonnet | theme/one_liner 정제 |
+| 13 | run_pages | interface_3 | O | Claude Sonnet | 6페이지 생성 |
+| 14 | run_hallcheck_pages | interface_3 | O | Claude Sonnet | 교정형 팩트체크 |
+| 15 | run_glossary | interface_3 | O | Claude Sonnet | 페이지별 용어사전 |
+| 16 | run_hallcheck_glossary | interface_3 | O | Claude Sonnet | 용어 팩트체크 |
+| 17 | run_tone_final | interface_3 | O | Claude Sonnet | 톤 보정 + 병합 |
+| 18 | run_chart_agent | interface_3 | O | GPT-5 mini | Reasoning → Tool → Plotly |
+| 19 | run_hallcheck_chart | interface_3 | O | GPT-5 mini | 차트 데이터 검증 |
+| 20 | collect_sources | interface_3 | - | - | 출처 매칭 + 차트 소스 병합 |
+| 21 | assemble_output | interface_3 | - | - | Pydantic 검증 + JSON 저장 |
 
 ### LangSmith 트레이싱 구조
 
@@ -244,7 +266,7 @@ START
 Pipeline Run
 ├── [phase: data_collection] 데이터 수집 (step 1~7)
 ├── [phase: interface_2] 내러티브 생성 (step 1~4)
-└── [phase: interface_3] 최종 조립 (step 1~6)
+└── [phase: interface_3] 최종 조립 (step 1~10)
 ```
 
 ---
@@ -349,26 +371,50 @@ nodes/interface3.py → SECTION_MAP     ← (step, title, section_key) 매핑
 
 ## 수정 가이드: Interface 3 (최종 조립)
 
-### 차트 생성
+Interface 3은 10노드 순차 파이프라인이다:
 
-**수정 파일**: `prompts/templates/chart_generation.md`, `config.py`
+```
+validated_interface_2
+  → run_theme → run_pages → hallcheck_pages
+  → run_glossary → hallcheck_glossary → tone_final
+  → chart_agent → hallcheck_chart
+  → collect_sources → assemble_output → END
+```
+
+### 프롬프트 수정
+
+| 노드 | 프롬프트 | 주요 수정 포인트 |
+|------|---------|-----------------|
+| run_theme | `3_theme.md` | theme 형식, one_liner 훅 스타일 |
+| run_pages | `3_pages.md` | 페이지별 작성 원칙, 톤 규칙 |
+| hallcheck_pages | `3_hallcheck_pages.md` | 검증 강도, overall_risk 기준 |
+| run_glossary | `3_glossary.md` | 용어 선별 기준, 난이도 수준 |
+| hallcheck_glossary | `3_hallcheck_glossary.md` | 정의 검증 기준 |
+| tone_final | `3_tone_final.md` | 톤 보정 규칙, 병합 구조 |
+
+### Chart Agent
+
+Chart Agent는 3단계 에이전트 루프를 실행한다:
+
+1. **Reasoning** (`3_chart_reasoning.md`): viz_hint 분석 → 차트 유형 선택 → 도구 호출 계획
+2. **Tool Execution**: DART 재무제표 / ECOS 환율 / 웹검색 도구 실행
+3. **Generation** (`3_chart_generation.md`): 도구 결과 + 문맥 → Plotly JSON 생성
+
+도구 수정: `ai/tools.py`
+노드 수정: `nodes/chart_agent.py`
 
 | 수정 목적 | 수정 위치 |
 |-----------|----------|
-| 차트 스타일/annotation | `chart_generation.md` |
-| 색상 팔레트 | `config.py` → `COLOR_PALETTE` |
-| 차트 골격 템플릿 | `_chart_skeletons.md` |
-| 모델 변경 | frontmatter `model:` |
-
-### 용어사전
-
-**수정 파일**: `prompts/templates/glossary_generation.md`
+| 차트 유형 가이드 | `3_chart_reasoning.md` |
+| Plotly 스타일/색상 | `3_chart_generation.md`, `config.py` → `COLOR_PALETTE` |
+| 도구 추가 | `ai/tools.py` + `chart_agent.py` → `AVAILABLE_TOOLS` |
+| Chart Agent 모델 | `3_chart_*.md` frontmatter 또는 `CHART_AGENT_MODEL` |
 
 ### 출처(sources) 수집
 
 **수정 파일**: `nodes/interface3.py` → `collect_sources_node`
 
-결정론적 노드이므로 Python 코드를 직접 수정한다. 키워드 기반 매칭 알고리즘 변경 가능.
+결정론적 노드. 키워드 기반 매칭 알고리즘 + chart_agent 소스 병합.
 
 ---
 
@@ -419,7 +465,7 @@ MatchedStockItem     # 교집합 출력 (v2: narrative 없음, has_narrative=Fal
 ## 테스트
 
 ```bash
-# 전체 테스트 (44개)
+# 전체 테스트 (53개)
 python -m pytest interface/tests/ -v
 
 # 데이터 수집 노드 테스트
@@ -431,19 +477,23 @@ python -m pytest interface/tests/test_data_collection_utils.py -v
 # 기존 스키마/노드 테스트
 python -m pytest interface/tests/test_schemas.py interface/tests/test_nodes.py -v
 
-# E2E mock 테스트 (데이터 수집 모드)
+# Chart Agent 테스트
+python -m pytest interface/tests/test_chart_agent.py -v
+
+# E2E mock 테스트 (22노드 파이프라인)
 python -m interface.run --backend mock
 
 # E2E mock 테스트 (파일 로드 모드)
 python -m interface.run --input path/to/curated.json --backend mock
 ```
 
-### 테스트 구성 (44개)
+### 테스트 구성 (53개)
 
 | 테스트 파일 | 테스트 수 | 검증 대상 |
 |------------|----------|----------|
-| `test_schemas.py` | 8 | Pydantic 스키마 검증 + roundtrip |
-| `test_nodes.py` | 8 | Interface 2/3 노드 mock 테스트 |
+| `test_schemas.py` | 10 | Pydantic 스키마 검증 + Quiz + roundtrip |
+| `test_nodes.py` | 12 | Interface 2/3 노드 mock 테스트 (10노드) |
+| `test_chart_agent.py` | 3 | Chart Agent + hallcheck 노드 |
 | `test_data_collection.py` | 13 | 크롤러/스크리닝/큐레이션 노드 + E2E |
 | `test_data_collection_utils.py` | 15 | intersection, summarizer, crawler 유틸 |
 
@@ -465,7 +515,15 @@ cp .env.example .env
 | `OPENAI_API_KEY` | OpenAI API 키 | 데이터 수집 (Phase 1/2), 차트/용어 생성 |
 | `CLAUDE_API_KEY` | Anthropic API 키 | 내러티브 생성, 팩트체크 |
 
-### 선택 환경변수
+### 선택 환경변수 (Chart Agent)
+
+| 변수 | 설명 | 기본값 |
+|------|------|--------|
+| `DART_API_KEY` | DART 재무제표 API 키 | (미설정 시 mock) |
+| `ECOS_API_KEY` | 한국은행 ECOS 환율 API 키 | (미설정 시 mock) |
+| `CHART_AGENT_MODEL` | Chart Agent 추론/생성 모델 | `gpt-5-mini` |
+
+### 기타 선택 환경변수
 
 <details>
 <summary>LangSmith (관측성)</summary>

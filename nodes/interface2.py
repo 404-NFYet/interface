@@ -23,9 +23,13 @@ logger = logging.getLogger(__name__)
 
 
 def _update_metrics(state: dict, node_name: str, elapsed: float, status: str = "success") -> dict:
-    metrics = dict(state.get("metrics") or {})
-    metrics[node_name] = {"elapsed_s": round(elapsed, 2), "status": status}
-    return metrics
+    """메트릭 업데이트 (Partial Update for Reducer)."""
+    return {
+        node_name: {
+            "elapsed_s": round(elapsed, 2),
+            "status": status
+        }
+    }
 
 
 # ── Mock 함수들 (테스트용) ──

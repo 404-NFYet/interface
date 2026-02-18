@@ -27,9 +27,13 @@ AVAILABLE_TOOLS: dict[str, Callable] = {
 
 
 def _update_metrics(state: dict, node_name: str, elapsed: float, status: str = "success") -> dict:
-    metrics = dict(state.get("metrics") or {})
-    metrics[node_name] = {"elapsed_s": round(elapsed, 2), "status": status}
-    return metrics
+    """메트릭 업데이트 (Partial Update for Reducer)."""
+    return {
+        node_name: {
+            "elapsed_s": round(elapsed, 2),
+            "status": status
+        }
+    }
 
 
 @traceable(name="run_chart_agent", run_type="chain",

@@ -53,13 +53,15 @@ def call_llm_with_prompt(
     prompt_name: str,
     variables: dict[str, Any],
     prompts_dir: str | Path | None = None,
+    max_retries: int = 3,
 ) -> dict[str, Any]:
-    """프롬프트 로드 -> LLM 호출 -> JSON 파싱.
+    """프롬프트 로드 -> LLM 호출 -> JSON 파싱 (재시도 기능 포함).
 
     Args:
         prompt_name: 프롬프트 템플릿 이름 (확장자 없이).
         variables: 템플릿에 치환할 변수 (dict/list는 자동 JSON 직렬화).
         prompts_dir: 프롬프트 디렉토리 오버라이드.
+        max_retries: JSON 파싱 실패 시 재시도 횟수.
 
     Returns:
         파싱된 JSON 딕셔너리.
@@ -80,24 +82,46 @@ def call_llm_with_prompt(
         messages.append({"role": "system", "content": spec.system_message})
     messages.append({"role": "user", "content": spec.body})
 
-    result = client.chat_completion(
-        provider=spec.provider,
-        model=spec.model,
-        messages=messages,
-        thinking=spec.thinking,
-        thinking_effort=spec.thinking_effort,
-        temperature=spec.temperature,
-        max_tokens=spec.max_tokens,
-        response_format=(
-            {"type": "json_object"}
-            if spec.response_format == "json_object"
-            else None
-        ),
-    )
+    last_exception = None
 
-    content = result["choices"][0]["message"]["content"]
-    LOGGER.info(
-        "LLM call done: prompt=%s provider=%s model=%s tokens=%s",
-        prompt_name, spec.provider, spec.model, result.get("usage"),
-    )
-    return extract_json_object(content)
+    for attempt in range(max_retries):
+        try:
+            result = client.chat_completion(
+                provider=spec.provider,
+                model=spec.model,
+                messages=messages,
+                thinking=spec.thinking,
+                thinking_effort=spec.thinking_effort,
+                temperature=spec.temperature,
+                max_tokens=spec.max_tokens,
+                response_format=(
+                    {"type": "json_object"}
+                    if spec.response_format == "json_object"
+                    else None
+                ),
+            )
+
+            content = result["choices"][0]["message"]["content"]
+            parsed = extract_json_object(content)
+
+            LOGGER.info(
+                "LLM call done: prompt=%s provider=%s model=%s tokens=%s (attempt %d/%d)",
+                prompt_name, spec.provider, spec.model, result.get("usage"), attempt + 1, max_retries
+            )
+            return parsed
+
+        except (ValueError, json.JSONDecodeError) as e:
+            last_exception = e
+            LOGGER.warning(
+                "JSON parse failed for prompt %s (attempt %d/%d): %s",
+                prompt_name, attempt + 1, max_retries, e
+            )
+            continue
+        except Exception as e:
+            # 기타 예외는 즉시 발생
+            LOGGER.error("LLM call failed with unexpected error: %s", e)
+            raise e
+
+    # 모든 재시도 실패
+    LOGGER.error("All %d attempts failed for prompt %s.", max_retries, prompt_name)
+    raise last_exception or ValueError(f"Failed to get valid JSON after {max_retries} attempts.")

@@ -15,9 +15,13 @@ logger = logging.getLogger(__name__)
 
 
 def _update_metrics(state: dict, node_name: str, elapsed: float, status: str = "success") -> dict:
-    metrics = dict(state.get("metrics") or {})
-    metrics[node_name] = {"elapsed_s": round(elapsed, 2), "status": status}
-    return metrics
+    """메트릭 업데이트 (Partial Update for Reducer)."""
+    return {
+        node_name: {
+            "elapsed_s": round(elapsed, 2),
+            "status": status
+        }
+    }
 
 
 _MOCK_SCREENED = [
@@ -51,10 +55,15 @@ def screen_stocks_node(state: dict) -> dict:
         }
 
     try:
-        from ..data_collection.screener import screen_stocks
         from ..data_collection.intersection import screened_to_matched
+        from ..mcp_client import call_mcp_tool
+        from ..config import TOP_N
 
-        screened = screen_stocks(market=market)
+        # MCP 도구 호출 (기존 screen_stocks 대체)
+        screened = call_mcp_tool("get_top_gainers", {
+            "market": market,
+            "limit": TOP_N
+        })
         if not screened:
             return {
                 "error": "스크리닝 결과가 없습니다. 시장 데이터를 확인하세요.",

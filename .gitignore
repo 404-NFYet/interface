@@ -22,3 +22,8 @@ output/
 # OS
 .DS_Store
 Thumbs.db
+
+# Data Collection Raw Data
+data/
+# Curated Context JSONs (Large generated files)
+curated_*.json

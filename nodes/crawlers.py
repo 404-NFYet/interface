@@ -15,9 +15,13 @@ logger = logging.getLogger(__name__)
 
 
 def _update_metrics(state: dict, node_name: str, elapsed: float, status: str = "success") -> dict:
-    metrics = dict(state.get("metrics") or {})
-    metrics[node_name] = {"elapsed_s": round(elapsed, 2), "status": status}
-    return metrics
+    """메트릭 업데이트 (Partial Update for Reducer)."""
+    return {
+        node_name: {
+            "elapsed_s": round(elapsed, 2),
+            "status": status
+        }
+    }
 
 
 # ── Mock 데이터 ──
@@ -71,10 +75,16 @@ def crawl_news_node(state: dict) -> dict:
         }
 
     try:
-        from ..data_collection.news_crawler import crawl_news, to_news_items
+        from ..data_collection.news_crawler import to_news_items
+        from ..mcp_client import call_mcp_tool
 
-        target_date = dt.date.today()
-        raw_items = crawl_news(target_date, market=market)
+        # MCP 도구 호출 (기존 crawl_news 대체)
+        # RSS 방식이라 query는 무시되지만 인터페이스는 유지
+        raw_items = call_mcp_tool("search_news", {
+            "query": "market_news",
+            "market": market,
+            "days": 1
+        })
         news_items = to_news_items(raw_items)
 
         logger.info("  crawl_news 완료: %d건", len(news_items))

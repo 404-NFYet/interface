@@ -48,6 +48,30 @@ from .nodes.chart_agent import run_chart_agent_node, run_hallcheck_chart_node
 from .nodes.screening import screen_stocks_node
 
 
+def merge_metrics(a: dict, b: dict) -> dict:
+    """메트릭 병합 (기존 값 + 새로운 값)."""
+    if not a:
+        a = {}
+    if not b:
+        b = {}
+    return {**a, **b}
+
+
+def merge_list(a: Optional[list], b: Optional[list]) -> list:
+    """리스트 병합 (중복 제거 포함)."""
+    # LangGraph는 a가 None일 수 있습니다.
+    res = list(a or [])
+    for item in (b or []):
+        if item not in res:
+            res.append(item)
+    return res
+
+
+def merge_last(a: Any, b: Any) -> Any:
+    """마지막 값 선택 (병렬 노드 충돌 시 나중 것 선택)."""
+    return b if b is not None else a
+
+
 # ── State 정의 ──
 
 class BriefingPipelineState(TypedDict):
@@ -83,11 +107,12 @@ class BriefingPipelineState(TypedDict):
     i3_pages: Optional[list]
     i3_validated: Optional[dict]
     i3_glossaries: Optional[list]
+    i3_glossary_search_context: Optional[str]
     i3_validated_glossaries: Optional[list]
     charts: Optional[dict]
     pages: Optional[list]
-    sources: Optional[list]
-    hallucination_checklist: Optional[list]
+    sources: Annotated[list, merge_list]
+    hallucination_checklist: Annotated[list, merge_list]
     theme: Optional[str]
     one_liner: Optional[str]
 
@@ -96,8 +121,11 @@ class BriefingPipelineState(TypedDict):
     output_path: Optional[str]
 
     # 메타
-    error: Optional[str]
-    metrics: Annotated[dict, lambda a, b: {**a, **b}]
+    error: Annotated[Optional[str], merge_last]
+    metrics: Annotated[dict, merge_metrics]
+
+
+
 
 
 # ── 조건부 라우팅 ──
@@ -114,6 +142,25 @@ def check_error(state: BriefingPipelineState) -> str:
     if state.get("error"):
         return "end"
     return "continue"
+
+
+def check_join_readiness(state: BriefingPipelineState) -> str:
+    """Interface 3 병렬 브랜치(Glossary, Chart) 종료 확인."""
+    metrics = state.get("metrics", {})
+    
+    # 두 브랜치의 마지막 노드가 모두 완료되었는지 확인
+    # run_hallcheck_glossary 완료 여부
+    glossary_done = "run_hallcheck_glossary" in metrics
+    
+    # run_hallcheck_chart 완료 여부
+    # chart_agent가 실행되지 않는 경우(차트 필요 없음)도 고려해야 하므로
+    # metrics에 기록된 것으로 판단하거나, i3_validated_glossaries와 charts 유무로 판단.
+    # 하지만 가장 확실한 건 metrics에 기록된 노드 이름.
+    chart_done = "run_hallcheck_chart" in metrics
+
+    if glossary_done and chart_done:
+        return "ready"
+    return "wait"
 
 
 # ── 그래프 빌더 ──
@@ -205,20 +252,37 @@ def build_graph() -> Any:
         {"continue": "validate_interface2", "end": END},
     )
 
-    # Interface 2 → Interface 3 (10노드 순차)
+    # Interface 2 → Interface 3 (Parallel Execution)
     graph.add_conditional_edges(
         "validate_interface2",
         check_error,
         {"continue": "run_theme", "end": END},
     )
     graph.add_edge("run_theme", "run_pages")
+
+    # Branch 1. Hallucination Check -> Glossary -> HallCheck Glossary
     graph.add_edge("run_pages", "run_hallcheck_pages")
     graph.add_edge("run_hallcheck_pages", "run_glossary")
     graph.add_edge("run_glossary", "run_hallcheck_glossary")
-    graph.add_edge("run_hallcheck_glossary", "run_tone_final")
-    graph.add_edge("run_tone_final", "run_chart_agent")
+
+    # Branch 2. Chart Generation -> HallCheck Chart
+    graph.add_edge("run_pages", "run_chart_agent")
     graph.add_edge("run_chart_agent", "run_hallcheck_chart")
-    graph.add_edge("run_hallcheck_chart", "collect_sources")
+
+    # Convergence: Branch 1 & 2가 모두 끝나면 Tone Final로 모임 (Join Pattern)
+    # 두 브랜치 중 마지막에 끝나는 쪽만 run_tone_final을 호출하도록 함.
+    graph.add_conditional_edges(
+        "run_hallcheck_glossary",
+        check_join_readiness,
+        {"ready": "run_tone_final", "wait": END}
+    )
+    graph.add_conditional_edges(
+        "run_hallcheck_chart",
+        check_join_readiness,
+        {"ready": "run_tone_final", "wait": END}
+    )
+
+    graph.add_edge("run_tone_final", "collect_sources")
     graph.add_edge("collect_sources", "assemble_output")
     graph.add_edge("assemble_output", END)
 

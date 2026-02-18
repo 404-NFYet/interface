@@ -223,6 +223,7 @@ def build_curated_context_node(state: dict) -> dict:
 
     try:
         topics = state.get("curated_topics", [])
+        
         if not topics:
             return {
                 "error": "큐레이션 결과가 없습니다.",
